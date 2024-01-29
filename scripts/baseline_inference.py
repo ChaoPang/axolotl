@@ -15,6 +15,7 @@ from tqdm import tqdm
 from datasets import load_from_disk
 import logging
 import numpy as np
+
 np.random.seed(1992)
 import ujson
 from transformers import GenerationConfig
@@ -176,11 +177,11 @@ def baseline_inference(
 
     print('Reading in dataset...')
     visit_meta = {}
-    data_dir = f'/nlp/projects/summarization/bhc_data_cleanup/mistral_inference/{args.dataset}_8192'
+    data_dir = f'{args.data_dir}/mistral_inference/{args.dataset}_8192'
     print(f'Reading in data from {data_dir}')
     data = load_from_disk(data_dir)
     if args.dataset == 'epic':
-        visit_meta = pd.read_csv('/nlp/projects/summarization/bhc_data_cleanup/bhc_test_meta.csv')
+        visit_meta = pd.read_csv(os.path.join(args.data_dir, 'bhc_test_meta.csv'))
         visit_meta = {
             row['visit_id']: row for row in visit_meta.to_dict('records')
         }
@@ -188,11 +189,11 @@ def baseline_inference(
     if args.dataset == 'epic':
         if args.human:
             valid_visit_ids = set(map(str, pd.read_csv(
-                '/nlp/projects/summarization/bhc_data_cleanup/bhc_human_meta.csv'
+                os.path.join(args.data_dir, 'bhc_human_meta.csv')
             )['visit_id']))
         else:
             valid_visit_ids = set(map(str, pd.read_csv(
-                '/nlp/projects/summarization/bhc_data_cleanup/bhc_test_meta.csv'
+                os.path.join(args.data_dir, 'bhc_test_meta.csv')
             )['visit_id']))
         data = data.filter(
             lambda row: row['visit_id'] in valid_visit_ids
@@ -204,7 +205,7 @@ def baseline_inference(
         idxs = list(sorted(np.random.choice(np.arange(n), size=(args.max_examples), replace=False)))
         data = data.select(idxs)
 
-    model = model.to(cfg.device)
+    #model = model.to(cfg.device)
     outputs = []
     for example in tqdm(data):
         out_row = run_example(
@@ -222,7 +223,7 @@ def baseline_inference(
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('BHC Vanilla Summarization.')
     parser.add_argument('--data_dir', default='/nlp/projects/summarization/bhc_data_cleanup')
-
+    parser.add_argument('--base_model', required=False)
     parser.add_argument('--dataset', default='epic')
     parser.add_argument('--config', default='baseline')
 
@@ -242,9 +243,10 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt', default=500)
 
     args = parser.parse_args()
-
-    args.base_model = os.path.join(args.data_dir, f'{args.pretrained_model}_weights', args.experiment)
-    config = Path(os.path.expanduser(f'~/axolotl-bhc/{args.pretrained_model}_{args.config}.yml'))
+    
+    if not hasattr(args, 'base_model'):
+        args.base_model = os.path.join(args.data_dir, f'{args.pretrained_model}_weights', args.experiment)
+    config = Path(os.path.expanduser(f'~/axolotl/{args.pretrained_model}_{args.config}.yml'))
 
     kwargs = {}
     # pylint: disable=duplicate-code
@@ -267,3 +269,4 @@ if __name__ == '__main__':
 
     print(f'Starting Baseline Inference...')
     baseline_inference(cfg=parsed_cfg, cli_args=parsed_cli_args)
+
