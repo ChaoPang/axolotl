@@ -101,13 +101,27 @@ def remove_duplicates_preserve_order(arr):
 
 def run_example(args, cfg, example, out_dir, model, tokenizer, visit_meta):
     example_id = example['example_id']
-    save_fn = os.path.join(out_dir, f'{example_id}.json')
 
+    lock_fn = os.path.join(out_dir, f'{example_id}.lock')
+    if os.path.exists(lock_fn):
+        print(f'Other process acquired the lock --> {lock_fn}. Skipping...')
+        return
+
+    save_fn = os.path.join(out_dir, f'{example_id}.json')
+    # Check whether the output file has been created
     if os.path.exists(save_fn) and not args.overwrite:
         print(f'Already exists --> {save_fn}. Skipping...')
         with open(save_fn, 'r') as fd:
             out_row = ujson.load(fd)
             return out_row
+
+    # Obtain the lock for this example by creating an empty lock file
+    try:
+        # Using 'x' mode for exclusive creation; fails if the file already exists
+        with open(lock_fn, 'x') as file:
+            pass  # The file is created; nothing is written to it
+    except FileExistsError:
+        print(f"The lock file {lock_fn} already exists.")
 
     target_no_dup = '\n'.join(remove_duplicates_preserve_order(example['target_sents']))
     notes = split_into_notes(example['source_filt'])
@@ -151,6 +165,13 @@ def run_example(args, cfg, example, out_dir, model, tokenizer, visit_meta):
     print(f'Saving to {save_fn}')
     with open(save_fn, 'w') as fd:
         json.dump(out_row, fd)
+
+    # Clean up the lock file
+    # Safely attempt to delete the lock file
+    try:
+        os.remove(lock_fn)
+    except OSError as e:
+        print(f"Error: {lock_fn} : {e.strerror}")
 
     return out_row
 
@@ -205,19 +226,18 @@ def baseline_inference(
         idxs = list(sorted(np.random.choice(np.arange(n), size=(args.max_examples), replace=False)))
         data = data.select(idxs)
 
-    #model = model.to(cfg.device)
-    outputs = []
+    # model = model.to(cfg.device)
+    # outputs = []
     for example in tqdm(data):
-        out_row = run_example(
+        run_example(
             args, cfg, example, out_dir, model, tokenizer, visit_meta
         )
-        outputs.append(out_row)
-
-    df = pd.DataFrame(outputs)
-    print(f'Saving predictions to {out_fn}...')
-    df.to_csv(out_fn, index=False)
-
-    print(df.select_dtypes(include='number').mean())
+        # outputs.append(out_row)
+    # df = pd.DataFrame(outputs)
+    # print(f'Saving predictions to {out_fn}...')
+    # df.to_csv(out_fn, index=False)
+    #
+    # print(df.select_dtypes(include='number').mean())
 
 
 if __name__ == '__main__':
@@ -243,7 +263,7 @@ if __name__ == '__main__':
     parser.add_argument('--ckpt', default=500)
 
     args = parser.parse_args()
-    
+
     if not hasattr(args, 'base_model'):
         args.base_model = os.path.join(args.data_dir, f'{args.pretrained_model}_weights', args.experiment)
     config = Path(os.path.expanduser(f'~/axolotl/{args.pretrained_model}_{args.config}.yml'))
@@ -269,4 +289,3 @@ if __name__ == '__main__':
 
     print(f'Starting Baseline Inference...')
     baseline_inference(cfg=parsed_cfg, cli_args=parsed_cli_args)
-
