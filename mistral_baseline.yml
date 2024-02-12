@@ -1,5 +1,5 @@
-base_model: /nlp/projects/summarization/bhc_data_cleanup/mistral_weights/baseline
-base_model_config: /nlp/projects/summarization/bhc_data_cleanup/mistral_weights/baseline
+base_model: /home/azureuser/llm/finetuned_mistral_7b/checkpoint-2000
+base_model_config: /home/azureuser/llm/finetuned_mistral_7b/
 model_type: MistralForCausalLM
 tokenizer_type: LlamaTokenizer
 is_mistral_derived_model: true
@@ -8,22 +8,26 @@ load_in_8bit: false
 load_in_4bit: false
 strict: false
 
+dataloader_pin_memory: true
+dataloader_prefetch_factor: 128
+dataloader_num_workers: 64
+
 datasets:
-  - path: /nlp/projects/summarization/bhc_data_cleanup/prompt_baseline.jsonl
+  - path: /home/azureuser/eus2devidsssyndls/llm//bhc_data_cleanup/prompt_baseline.jsonl
     type: summarizetldr
 
-dataset_prepared_path:
+dataset_prepared_path: /home/azureuser/llm/last_run_prepared
 val_set_size: 0.005
-output_dir: /nlp/projects/summarization/bhc_data_cleanup/mistral_weights/baseline_ctd
+output_dir: /home/azureuser/llm/mistral_weights/baseline_ctd
 
 sequence_len: 8192
 sample_packing: false
 pad_to_sequence_len: true
 
-wandb_project: mistral
-wandb_entity: griffinadams
+wandb_project:
+wandb_entity:
 wandb_watch:
-wandb_run_id: mistral_baseline_ctd_redone
+wandb_run_id:
 wandb_log_model:
 
 gradient_accumulation_steps: 8
@@ -42,6 +46,8 @@ tf32: false
 gradient_checkpointing: true
 early_stopping_patience:
 resume_from_checkpoint:
+auto_resume_from_checkpoints: true
+
 local_rank:
 logging_steps: 1
 xformers_attention:
@@ -55,7 +61,7 @@ save_steps: 500
 save_strategy: steps
 save_total_limit: 10
 debug:
-deepspeed: /home/ga2530/axolotl-bhc/deepspeed/zero2.json
+deepspeed: #deepspeed/zero2.json
 weight_decay: 0.0
 fsdp:
 fsdp_config:
