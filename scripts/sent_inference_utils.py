@@ -11,6 +11,7 @@ from nltk import word_tokenize
 from transformers import AutoModel, AutoTokenizer
 from transformers import GenerationConfig
 import numpy as np
+
 np.random.seed(1992)
 import json
 import torch
@@ -29,7 +30,6 @@ BHC_PREFIX = '\n\n### PARTIAL HOSPITAL COURSE:\n'
 BHC_FULL = '\n\n### BRIEF HOSPITAL COURSE:\n'
 PATIENT_TERMS = {'patient', 'pt', 'patient\'s', 'patients', 'patients\''}
 BHC_STOPWORDS = set(stopwords.words('english')).union(string.punctuation).union(PATIENT_TERMS)
-
 
 from section_utils import get_attr
 from utils import INSTRUCTIONS
@@ -323,8 +323,8 @@ def transform_text_for_llama(
 
 
 def get_entity_guidance(
-        example_id, all_ent_probs, source_ent_clusters, source_ent_types,
-        pred_ent_threshold=_DEFAULT_PRED_ENT_THRESHOLD, min_ents=3, max_ents=100
+    example_id, all_ent_probs, source_ent_clusters, source_ent_types,
+    pred_ent_threshold=_DEFAULT_PRED_ENT_THRESHOLD, min_ents=3, max_ents=100
 ):
     # priority = np.argsort(-np.array(ent_probs))
     ent_probs = [x for x in all_ent_probs if x['example_id'] == example_id][0]
@@ -346,17 +346,19 @@ def get_entity_guidance(
     return ents, pred_source_clusters
 
 
-def load_ent_embeds():
+def load_ent_embeds(data_dir=None):
     print('Loading embeddings...')
-    with open('/nlp/projects/summarization/bhc_data_cleanup/entity_embeddings_test.pk', 'rb') as fd:
+    if not data_dir:
+        data_dir = '/nlp/projects/summarization/bhc_data_cleanup/'
+    with open(os.path.join(data_dir, 'entity_embeddings_test.pk'), 'rb') as fd:
         span2embed = pickle.load(fd)
     return span2embed
 
 
 def load_ent_info(args, example_id, span2embed):
     ent_suffix = '' if args.dataset == 'epic' else f'_{args.dataset}'
-    entity_fn = os.path.join(IN_DIR, f'entity_stanza{ent_suffix}', f'{example_id}.json')
-    entity_merge_fn = os.path.join(IN_DIR, f'entity_stanza{ent_suffix}_top_ents', f'{example_id}.json')
+    entity_fn = os.path.join(args.data_dir, f'entity_stanza{ent_suffix}', f'{example_id}.json')
+    entity_merge_fn = os.path.join(args.data_dir, f'entity_stanza{ent_suffix}_top_ents', f'{example_id}.json')
 
     with open(entity_merge_fn, 'r') as fd:
         ent_merges = ujson.load(fd)
@@ -412,7 +414,8 @@ def remove_duplicates(arr):
     covered_toks = set()
     new_arr = []
     for sent in arr:
-        sent_toks = list(set([x.strip().lower() for x in re.split('\W+', sent) if x.strip().lower() not in BHC_STOPWORDS and len(x.strip()) > 0]))
+        sent_toks = list(set([x.strip().lower() for x in re.split('\W+', sent) if
+                              x.strip().lower() not in BHC_STOPWORDS and len(x.strip()) > 0]))
         num_new = len([
             tok for tok in sent_toks if tok not in covered_toks
         ])
@@ -450,7 +453,7 @@ def get_pred_ent_cluster_idxs(cluster_pred_probs, pred_ent_threshold, min_ents, 
 
 
 def extract_pred_ent_span_set(
-        ent_probs, ent_info, pred_ent_threshold=_DEFAULT_PRED_ENT_THRESHOLD, min_ents=3, max_ents=100
+    ent_probs, ent_info, pred_ent_threshold=_DEFAULT_PRED_ENT_THRESHOLD, min_ents=3, max_ents=100
 ):
     pred_idxs = get_pred_ent_cluster_idxs(ent_probs['cluster_pred_probs'], pred_ent_threshold, min_ents, max_ents)
 
@@ -531,7 +534,6 @@ def filter_to_max_token_limit(source_input, clusters, max_prompt_tokens):
         chosen_idxs.append(chosen_idx)
         for to_add in line_cluster_idxs[chosen_idx]:
             clusters_accounted_for.add(to_add)
-
 
     chosen_idxs = list(sorted(chosen_idxs))
     if chosen_toks < max_prompt_tokens:
