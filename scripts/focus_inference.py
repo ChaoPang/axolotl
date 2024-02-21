@@ -18,6 +18,7 @@ from datasets import load_from_disk
 import logging
 import regex as re
 import numpy as np
+
 np.random.seed(1992)
 import ujson
 from transformers import GenerationConfig
@@ -43,7 +44,7 @@ configure_logging()
 LOG = logging.getLogger("axolotl.scripts")
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 SAP_BERT = 'cambridgeltl/SapBERT-from-PubMedBERT-fulltext'
-IN_DIR = '/nlp/projects/summarization/bhc_data_cleanup'
+# IN_DIR = '/nlp/projects/summarization/bhc_data_cleanup'
 SPAN_EMBED_DIM = 768
 _DEFAULT_PRED_ENT_THRESHOLD = 0.75
 _DEFAULT_ENT_MERGE_THRESHOLD = 0.6
@@ -116,6 +117,12 @@ def remove_duplicates_preserve_order(arr):
 
 def run_example(args, cfg, example, out_dir, all_ent_probs, span2embed, model, tokenizer, visit_meta):
     example_id = example['example_id']
+
+    lock_fn = os.path.join(out_dir, f'{example_id}.lock')
+    if os.path.exists(lock_fn):
+        print(f'Other process acquired the lock --> {lock_fn}. Skipping...')
+        return
+
     save_fn = os.path.join(out_dir, f'{example_id}.json')
 
     if os.path.exists(save_fn) and not args.overwrite:
@@ -123,6 +130,14 @@ def run_example(args, cfg, example, out_dir, all_ent_probs, span2embed, model, t
         with open(save_fn, 'r') as fd:
             out_row = ujson.load(fd)
             return out_row
+
+    # Obtain the lock for this example by creating an empty lock file
+    try:
+        # Using 'x' mode for exclusive creation; fails if the file already exists
+        with open(lock_fn, 'x') as file:
+            pass  # The file is created; nothing is written to it
+    except FileExistsError:
+        print(f"The lock file {lock_fn} already exists.")
 
     target_no_dup = '\n'.join(remove_duplicates_preserve_order(example['target_sents']))
     notes = split_into_notes(example['source_filt'])
@@ -138,7 +153,7 @@ def run_example(args, cfg, example, out_dir, all_ent_probs, span2embed, model, t
     )
 
     ent_suffix = '' if args.dataset == 'epic' else f'_{args.dataset}'
-    merge_fn = os.path.join(IN_DIR, f'entity_stanza{ent_suffix}_top_ents', f'{example_id}.json')
+    merge_fn = os.path.join(args.data_dir, f'entity_stanza{ent_suffix}_top_ents', f'{example_id}.json')
 
     # Entity Stuff
     ent_info = load_ent_info(args, example_id, span2embed)
@@ -247,6 +262,13 @@ def run_example(args, cfg, example, out_dir, all_ent_probs, span2embed, model, t
     with open(save_fn, 'w') as fd:
         json.dump(out_row, fd)
 
+    # Clean up the lock file
+    # Safely attempt to delete the lock file
+    try:
+        os.remove(lock_fn)
+    except OSError as e:
+        print(f"Error: {lock_fn} : {e.strerror}")
+
     return out_row
 
 
@@ -272,11 +294,11 @@ def focus_inference(
 
     print('Reading in dataset...')
     visit_meta = {}
-    data_dir = f'/nlp/projects/summarization/bhc_data_cleanup/mistral_inference/{args.dataset}_8192'
+    data_dir = f'{args.data_dir}/mistral_inference/{args.dataset}_8192'
     print(f'Reading in data from {data_dir}')
     data = load_from_disk(data_dir)
     if args.dataset == 'epic':
-        visit_meta = pd.read_csv('/nlp/projects/summarization/bhc_data_cleanup/bhc_test_meta.csv')
+        visit_meta = pd.read_csv(os.path.join(args.data_dir, 'bhc_test_meta.csv'))
         visit_meta = {
             row['visit_id']: row for row in visit_meta.to_dict('records')
         }
@@ -284,11 +306,11 @@ def focus_inference(
     if args.dataset == 'epic':
         if args.human:
             valid_visit_ids = set(map(str, pd.read_csv(
-                '/nlp/projects/summarization/bhc_data_cleanup/bhc_human_meta.csv'
+                os.path.join(args.data_dir, 'bhc_human_meta.csv')
             )['visit_id']))
         else:
             valid_visit_ids = set(map(str, pd.read_csv(
-                '/nlp/projects/summarization/bhc_data_cleanup/bhc_test_meta.csv'
+                os.path.join(args.data_dir, 'bhc_test_meta.csv')
             )['visit_id']))
         data = data.filter(
             lambda row: row['visit_id'] in valid_visit_ids
@@ -302,14 +324,14 @@ def focus_inference(
 
     if args.dataset == 'epic':
         if args.human:
-            ent_fn = os.path.join(IN_DIR, 'bhc_weights', 'fixed', 'test_human.json')
+            ent_fn = os.path.join(args.data_dir, 'bhc_weights', 'fixed', 'test_human.json')
         else:
-            ent_fn = os.path.join(IN_DIR, 'bhc_weights', 'fixed', 'test_test.json')
+            ent_fn = os.path.join(args.data_dir, 'bhc_weights', 'fixed', 'test_test.json')
     elif args.dataset == 'cumc':
-        ent_fn = os.path.join(IN_DIR, 'bhc_weights', 'fixed', 'test_cumc_test.json')
+        ent_fn = os.path.join(args.data_dir, 'bhc_weights', 'fixed', 'test_cumc_test.json')
     else:
         assert args.dataset == 'mimic'
-        ent_fn = os.path.join(IN_DIR, 'bhc_weights', 'fixed', 'test_mimic_test.json')
+        ent_fn = os.path.join(args.data_dir, 'bhc_weights', 'fixed', 'test_mimic_test.json')
 
     with open(ent_fn, 'r') as fd:
         all_ent_probs = ujson.load(fd)
@@ -320,15 +342,16 @@ def focus_inference(
     new = len(data)
     print(f'Entity Probabilities for {new} / {prev} examples. Filtering...')
 
-    span2embed = load_ent_embeds()
+    span2embed = load_ent_embeds(args.data_dir)
 
-    model = model.to(cfg.device)
+    # model = model.to(cfg.device)
     outputs = []
     for example in tqdm(data):
         out_row = run_example(
             args, cfg, example, out_dir, all_ent_probs, span2embed, model, tokenizer, visit_meta
         )
-        outputs.append(out_row)
+        if out_row:
+            outputs.append(out_row)
 
     df = pd.DataFrame(outputs)
     print(f'Saving predictions to {out_fn}...')
@@ -340,6 +363,7 @@ def focus_inference(
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('BHC Focus-Plnaning Summarization.')
     parser.add_argument('--data_dir', default='/nlp/projects/summarization/bhc_data_cleanup')
+    parser.add_argument('--base_model', required=False)
 
     parser.add_argument('--dataset', default='epic')
     parser.add_argument('--config', default='focus')
@@ -371,8 +395,7 @@ if __name__ == '__main__':
     else:
         assert args.pred_ent_threshold == 0.62
 
-    args.base_model = os.path.join(args.data_dir, f'{args.pretrained_model}_weights', args.experiment)
-    config = Path(os.path.expanduser(f'~/axolotl-bhc/{args.pretrained_model}_{args.config}.yml'))
+    config = Path(os.path.expanduser(f'~/axolotl/{args.pretrained_model}_{args.config}.yml'))
 
     kwargs = {}
     # pylint: disable=duplicate-code
@@ -380,7 +403,12 @@ if __name__ == '__main__':
     print_axolotl_text_art()
     parsed_cfg = load_cfg(config, **kwargs)
     parsed_cfg.sample_packing = False
-    parsed_cfg.base_model = os.path.join(args.base_model, f'checkpoint-{args.ckpt}')
+
+    if args.ckpt == 'final':
+        parsed_cfg.base_model = args.base_model
+    else:
+        parsed_cfg.base_model = os.path.join(args.base_model, f'checkpoint-{args.ckpt}')
+
     assert os.path.exists(parsed_cfg.base_model)
     parsed_cfg.base_model_config = args.base_model
     parser = transformers.HfArgumentParser((TrainerCliArgs))

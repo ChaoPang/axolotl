@@ -274,7 +274,8 @@ def frost_inference(
         out_row = run_example(
             args, cfg, example, out_dir, all_ent_probs, span2embed, model, tokenizer, visit_meta
         )
-        outputs.append(out_row)
+        if out_row:
+            outputs.append(out_row)
 
     df = pd.DataFrame(outputs)
     print(f'Saving predictions to {out_fn}...')
